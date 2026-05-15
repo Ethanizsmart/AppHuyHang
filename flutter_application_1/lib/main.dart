@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:universal_html/html.dart' as html;
+import 'dart:typed_data';
 
 void main() {
   runApp(const WasteApp());
@@ -574,6 +576,34 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  Future<Directory> _resolveOutputDirectory() async {
+  if (Platform.isAndroid || Platform.isIOS) {
+    return getApplicationDocumentsDirectory();
+  }
+
+  try {
+    final dl = await getDownloadsDirectory();
+    return dl ?? await getApplicationDocumentsDirectory();
+  } catch (_) {
+    return await getApplicationDocumentsDirectory();
+  }
+}
+
+Future<void> _downloadWebFile(String filename, List<int> bytes) async {
+  final blob = html.Blob([Uint8List.fromList(bytes)]);
+
+  final url = html.Url.createObjectUrlFromBlob(blob);
+
+  try {
+    html.AnchorElement(href: url)
+      ..setAttribute('download', filename)
+      ..click();
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  } finally {
+    html.Url.revokeObjectUrl(url);
+  }
+}
   final List<MenuItem> menus = [...demoMenus];
   final List<BatchRecipe> batches = [...demoBatches];
   final List<WasteRecord> records = [];
@@ -631,234 +661,227 @@ class _HomePageState extends State<HomePage> {
    Export CSV (compact detailed + daily + monthly)
   ---------------------------- */
   Future<void> _exportCsv() async {
-    if (records.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không có bản ghi để xuất')));
-      return;
-    }
-    if (kIsWeb) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Export CSV chưa hỗ trợ trên Web trong bản này.')));
-      return;
-    }
-
-    try {
-      final now = DateTime.now();
-      final baseName = 'waste_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}';
-
-      // Compact Detailed CSV: one row per record, ingredients summarized in one column
-      final sbDetail = StringBuffer();
-      sbDetail.writeln('Ngày,Món,Số lượng,Đơn vị,Nguyên liệu (tóm tắt),Lý do');
-      for (final r in records) {
-        final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(r.date);
-        final ingSummary = _ingredientsSummary(r.aggregated).replaceAll('"', '\'');
-        final reason = r.reason?.replaceAll(',', ' ') ?? '';
-        // quote ingredient column (may contain commas)
-        sbDetail.writeln('$dateStr,${r.menuName},${_formatDouble(r.menuQty)},${r.menuUnit},"$ingSummary",$reason');
-      }
-
-      // Daily summary CSV
-      final daily = _aggregateByDay(records);
-      final sbDaily = StringBuffer();
-      sbDaily.writeln('Ngày,Nguyên liệu,Khối lượng,Đơn vị');
-      final sortedDays = daily.keys.toList()..sort();
-      for (final day in sortedDays) {
-        final map = daily[day]!;
-        final sortedKeys = map.keys.toList()..sort();
-        for (final k in sortedKeys) {
-          final parts = k.split('||');
-          final name = parts[0];
-          final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
-          sbDaily.writeln('$day,$name,${_formatDouble(map[k]!.amount)},$unit');
-        }
-      }
-
-      // Monthly summary CSV
-      final monthly = _aggregateByMonth(records);
-      final sbMonthly = StringBuffer();
-      sbMonthly.writeln('Tháng,Nguyên liệu,Khối lượng,Đơn vị');
-      final sortedMonths = monthly.keys.toList()..sort();
-      for (final m in sortedMonths) {
-        final map = monthly[m]!;
-        final sortedKeys = map.keys.toList()..sort();
-        for (final k in sortedKeys) {
-          final parts = k.split('||');
-          final name = parts[0];
-          final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
-          sbMonthly.writeln('$m,$name,${_formatDouble(map[k]!.amount)},$unit');
-        }
-      }
-
-      // write files
-      Directory targetDir;
-      if (Platform.isAndroid || Platform.isIOS) {
-        targetDir = await getApplicationDocumentsDirectory();
-      } else {
-        try {
-          final dl = await getDownloadsDirectory();
-          targetDir = dl ?? await getApplicationDocumentsDirectory();
-        } catch (_) {
-          targetDir = await getApplicationDocumentsDirectory();
-        }
-      }
-
-      final fileDetail = File('${targetDir.path}/$baseName.csv');
-      await fileDetail.writeAsBytes(utf8.encode(sbDetail.toString()), flush: true);
-
-      final fileDaily = File('${targetDir.path}/${baseName}_daily_summary.csv');
-      await fileDaily.writeAsBytes(utf8.encode(sbDaily.toString()), flush: true);
-
-      final fileMonthly = File('${targetDir.path}/${baseName}_monthly_summary.csv');
-      await fileMonthly.writeAsBytes(utf8.encode(sbMonthly.toString()), flush: true);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã lưu:\n${fileDetail.path}\n${fileDaily.path}\n${fileMonthly.path}')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi khi xuất CSV: $e')));
-    }
+  if (records.isEmpty) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Không có bản ghi để xuất')),
+    );
+    return;
   }
+
+  try {
+    final now = DateTime.now();
+    final baseName = 'waste_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}';
+
+    final sbDetail = StringBuffer();
+    sbDetail.writeln('Ngày,Món,Số lượng,Đơn vị,Nguyên liệu (tóm tắt),Lý do');
+    for (final r in records) {
+      final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(r.date);
+      final ingSummary = _ingredientsSummary(r.aggregated).replaceAll('"', '\'');
+      final reason = r.reason?.replaceAll(',', ' ') ?? '';
+      sbDetail.writeln(
+        '$dateStr,${r.menuName},${_formatDouble(r.menuQty)},${r.menuUnit},"$ingSummary",$reason',
+      );
+    }
+
+    final daily = _aggregateByDay(records);
+    final sbDaily = StringBuffer();
+    sbDaily.writeln('Ngày,Nguyên liệu,Khối lượng,Đơn vị');
+    final sortedDays = daily.keys.toList()..sort();
+    for (final day in sortedDays) {
+      final map = daily[day]!;
+      final sortedKeys = map.keys.toList()..sort();
+      for (final k in sortedKeys) {
+        final parts = k.split('||');
+        final name = parts[0];
+        final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
+        sbDaily.writeln('$day,$name,${_formatDouble(map[k]!.amount)},$unit');
+      }
+    }
+
+    final monthly = _aggregateByMonth(records);
+    final sbMonthly = StringBuffer();
+    sbMonthly.writeln('Tháng,Nguyên liệu,Khối lượng,Đơn vị');
+    final sortedMonths = monthly.keys.toList()..sort();
+    for (final m in sortedMonths) {
+      final map = monthly[m]!;
+      final sortedKeys = map.keys.toList()..sort();
+      for (final k in sortedKeys) {
+        final parts = k.split('||');
+        final name = parts[0];
+        final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
+        sbMonthly.writeln('$m,$name,${_formatDouble(map[k]!.amount)},$unit');
+      }
+    }
+
+    if (kIsWeb) {
+      await _downloadWebFile('$baseName.csv', utf8.encode(sbDetail.toString()));
+      await _downloadWebFile('${baseName}_daily_summary.csv', utf8.encode(sbDaily.toString()));
+      await _downloadWebFile('${baseName}_monthly_summary.csv', utf8.encode(sbMonthly.toString()));
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Đã tải 3 file CSV')),
+      );
+      return;
+    }
+
+    final targetDir = await _resolveOutputDirectory();
+
+    final fileDetail = File('${targetDir.path}/$baseName.csv');
+    await fileDetail.writeAsBytes(utf8.encode(sbDetail.toString()), flush: true);
+
+    final fileDaily = File('${targetDir.path}/${baseName}_daily_summary.csv');
+    await fileDaily.writeAsBytes(utf8.encode(sbDaily.toString()), flush: true);
+
+    final fileMonthly = File('${targetDir.path}/${baseName}_monthly_summary.csv');
+    await fileMonthly.writeAsBytes(utf8.encode(sbMonthly.toString()), flush: true);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Đã lưu:\n${fileDetail.path}\n${fileDaily.path}\n${fileMonthly.path}',
+        ),
+      ),
+    );
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Lỗi khi xuất CSV: $e')),
+    );
+  }
+}
 
   /* ----------------------------
    Export XLSX (compact detailed + daily + monthly sheets)
   ---------------------------- */
   Future<void> _exportXlsx() async {
-    if (records.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Không có bản ghi để xuất')));
-      return;
-    }
-    if (kIsWeb) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Export Excel chưa hỗ trợ trên Web trong bản này.')));
-      return;
-    }
+  if (records.isEmpty) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Không có bản ghi để xuất')),
+    );
+    return;
+  }
 
-    try {
-      final now = DateTime.now();
-      final filename = 'waste_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}.xlsx';
+  try {
+    final now = DateTime.now();
+    final filename = 'waste_log_${DateFormat('yyyyMMdd_HHmmss').format(now)}.xlsx';
 
-      // create excel
-      final excel = Excel.createExcel();
+    final excel = Excel.createExcel();
 
-      // Compact Detailed sheet (one row per record)
-      final sheetDetailName = 'Waste';
-      final Sheet sheetDetail = excel[sheetDetailName];
+    final sheetDetail = excel['Waste'];
+    sheetDetail.appendRow([
+      TextCellValue('Ngày'),
+      TextCellValue('Món'),
+      TextCellValue('Số lượng'),
+      TextCellValue('Đơn vị'),
+      TextCellValue('Nguyên liệu (tóm tắt)'),
+      TextCellValue('Lý do'),
+    ]);
+
+    for (final r in records) {
+      final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(r.date);
+      final ingSummary = _ingredientsSummary(r.aggregated);
+      final reason = r.reason?.replaceAll(',', ' ') ?? '';
 
       sheetDetail.appendRow([
-        TextCellValue('Ngày'),
-        TextCellValue('Món'),
-        TextCellValue('Số lượng'),
-        TextCellValue('Đơn vị'),
-        TextCellValue('Nguyên liệu (tóm tắt)'),
-        TextCellValue('Lý do'),
+        TextCellValue(dateStr),
+        TextCellValue(r.menuName),
+        DoubleCellValue(r.menuQty),
+        TextCellValue(r.menuUnit),
+        TextCellValue(ingSummary),
+        TextCellValue(reason),
       ]);
+    }
 
-      for (final r in records) {
-        final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(r.date);
-        final ingSummary = _ingredientsSummary(r.aggregated);
-        final reason = r.reason?.replaceAll(',', ' ') ?? '';
+    final daily = _aggregateByDay(records);
+    final sheetDaily = excel['Daily Summary'];
+    sheetDaily.appendRow([
+      TextCellValue('Ngày'),
+      TextCellValue('Nguyên liệu'),
+      TextCellValue('Khối lượng'),
+      TextCellValue('Đơn vị'),
+    ]);
 
-        sheetDetail.appendRow([
-          TextCellValue(dateStr),
-          TextCellValue(r.menuName),
-          DoubleCellValue(r.menuQty),
-          TextCellValue(r.menuUnit),
-          TextCellValue(ingSummary),
-          TextCellValue(reason),
+    final sortedDays = daily.keys.toList()..sort();
+    for (final day in sortedDays) {
+      final map = daily[day]!;
+      final sortedKeys = map.keys.toList()..sort();
+      for (final k in sortedKeys) {
+        final parts = k.split('||');
+        final name = parts[0];
+        final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
+        sheetDaily.appendRow([
+          TextCellValue(day),
+          TextCellValue(name),
+          DoubleCellValue(map[k]!.amount),
+          TextCellValue(unit),
         ]);
       }
-
-      // Daily summary sheet
-      final daily = _aggregateByDay(records);
-      final sheetDailyName = 'Daily Summary';
-      final Sheet sheetDaily = excel[sheetDailyName];
-
-      sheetDaily.appendRow([
-        TextCellValue('Ngày'),
-        TextCellValue('Nguyên liệu'),
-        TextCellValue('Khối lượng'),
-        TextCellValue('Đơn vị'),
-      ]);
-
-      final sortedDays2 = daily.keys.toList()..sort();
-      for (final day in sortedDays2) {
-        final map = daily[day]!;
-        final sortedKeys = map.keys.toList()..sort();
-        for (final k in sortedKeys) {
-          final parts = k.split('||');
-          final name = parts[0];
-          final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
-          sheetDaily.appendRow([
-            TextCellValue(day),
-            TextCellValue(name),
-            DoubleCellValue(map[k]!.amount),
-            TextCellValue(unit),
-          ]);
-        }
-      }
-
-      // Monthly summary sheet
-      final monthly = _aggregateByMonth(records);
-      final sheetMonthName = 'Monthly Summary';
-      final Sheet sheetMonth = excel[sheetMonthName];
-
-      sheetMonth.appendRow([
-        TextCellValue('Tháng'),
-        TextCellValue('Nguyên liệu'),
-        TextCellValue('Khối lượng'),
-        TextCellValue('Đơn vị'),
-      ]);
-
-      final sortedMonths = monthly.keys.toList()..sort();
-      for (final m in sortedMonths) {
-        final map = monthly[m]!;
-        final sortedKeys = map.keys.toList()..sort();
-        for (final k in sortedKeys) {
-          final parts = k.split('||');
-          final name = parts[0];
-          final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
-          sheetMonth.appendRow([
-            TextCellValue(m),
-            TextCellValue(name),
-            DoubleCellValue(map[k]!.amount),
-            TextCellValue(unit),
-          ]);
-        }
-      }
-
-      final List<int>? fileBytes = excel.encode();
-      if (fileBytes == null) throw Exception('Không tạo được file excel.');
-
-      Directory targetDir;
-      if (Platform.isAndroid || Platform.isIOS) {
-        targetDir = await getApplicationDocumentsDirectory();
-      } else {
-        try {
-          final dl = await getDownloadsDirectory();
-          targetDir = dl ?? await getApplicationDocumentsDirectory();
-        } catch (_) {
-          targetDir = await getApplicationDocumentsDirectory();
-        }
-      }
-
-      final file = File('${targetDir.path}/$filename');
-      await file.writeAsBytes(fileBytes, flush: true);
-
-      // try to open file (desktop / android)
-      try {
-        if (!kIsWeb) await OpenFile.open(file.path);
-      } catch (_) {
-        // ignore open error
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Đã lưu: ${file.path}')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Lỗi khi xuất Excel: $e')));
     }
+
+    final monthly = _aggregateByMonth(records);
+    final sheetMonthly = excel['Monthly Summary'];
+    sheetMonthly.appendRow([
+      TextCellValue('Tháng'),
+      TextCellValue('Nguyên liệu'),
+      TextCellValue('Khối lượng'),
+      TextCellValue('Đơn vị'),
+    ]);
+
+    final sortedMonths = monthly.keys.toList()..sort();
+    for (final m in sortedMonths) {
+      final map = monthly[m]!;
+      final sortedKeys = map.keys.toList()..sort();
+      for (final k in sortedKeys) {
+        final parts = k.split('||');
+        final name = parts[0];
+        final unit = parts.length > 1 ? parts[1] : map[k]!.unit;
+        sheetMonthly.appendRow([
+          TextCellValue(m),
+          TextCellValue(name),
+          DoubleCellValue(map[k]!.amount),
+          TextCellValue(unit),
+        ]);
+      }
+    }
+
+    final fileBytes = excel.encode();
+    if (fileBytes == null) {
+      throw Exception('Không tạo được file excel.');
+    }
+
+    if (kIsWeb) {
+      await _downloadWebFile(filename, fileBytes);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Đã tải file: $filename')),
+      );
+      return;
+    }
+
+    final targetDir = await _resolveOutputDirectory();
+    final file = File('${targetDir.path}/$filename');
+    await file.writeAsBytes(fileBytes, flush: true);
+
+    try {
+      await OpenFile.open(file.path);
+    } catch (_) {}
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Đã lưu: ${file.path}')),
+    );
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Lỗi khi xuất Excel: $e')),
+    );
   }
+}
 
   /* ----------------------------
    Ingredients manager + quick search cancel
