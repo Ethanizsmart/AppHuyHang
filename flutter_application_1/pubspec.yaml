@@ -1,0 +1,39 @@
+name: huyhangapp
+description: App huy hang Flutter
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI
+  cupertino_icons: ^1.0.8
+
+  # Excel export
+  excel: ^4.0.6
+
+  # Date format
+  intl: ^0.20.2
+
+  # File system
+  path_provider: ^2.1.2
+
+  # Permission (Android)
+  permission_handler: ^12.0.1
+
+  # Open exported file
+  open_file: ^3.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
