@@ -26,9 +26,9 @@ Dự án được xây dựng để giúp việc theo dõi hàng hủy rõ ràng
 
 ## Cấu Trúc Chính
 
-- `waste_app/lib/main.dart`: chứa logic demo hiện tại, bao gồm model dữ liệu, công thức, giao diện và chức năng export.
-- `waste_app/web/`: cấu hình Flutter Web, manifest và icon.
-- `waste_app/pubspec.yaml`: khai báo dependencies của dự án.
+- `lib/main.dart`: chứa logic demo hiện tại, bao gồm model dữ liệu, công thức, giao diện và chức năng export.
+- `web/`: cấu hình Flutter Web, manifest và icon.
+- `pubspec.yaml`: khai báo dependencies của dự án.
 
 ## Ghi Chú
 
